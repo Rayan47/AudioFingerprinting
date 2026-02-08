@@ -1,15 +1,16 @@
 use crate::types::types::SpectrogramPoint;
 
-use std::cmp;
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 
 
-const BAND_SIZE: usize = 32;
+const BAND_SIZE: usize = 16;
 const TIME_STEP: usize = 16;
 
 const CAPACITY: usize = BAND_SIZE * TIME_STEP;
 const Q_SIZE: usize = 2048 / BAND_SIZE;
+const STRIDE:usize = 4;
+const PEAKS_PER_WINDOW:usize = 1;
 
 struct FixedLengthQueue {
     queue: VecDeque<f32>,
@@ -46,7 +47,7 @@ impl FixedLengthQueue {
     fn len(&self) -> usize {
         self.queue.len()
     }
-    fn top_three_with_indices(&self) -> Vec<(usize, f32)> {
+    fn top_n_with_indices(&self, n:usize) -> Vec<(usize, f32)> {
         // 1. Create a vector of (index, value) tuples
         let mut items: Vec<(usize, f32)> = self.queue
             .iter()
@@ -61,7 +62,7 @@ impl FixedLengthQueue {
         });
 
         // 3. Take the first 3 items
-        items.into_iter().take(3).collect()
+        items.into_iter().take(n).collect()
     }
     
     
@@ -85,10 +86,10 @@ pub fn save_spectrogram_peaks(
             }
             i += 1;
         }
-        if x >= BAND_SIZE-1 {
+        if (x >= BAND_SIZE-1) && ((x+ 1 -BAND_SIZE)%STRIDE == 0){
             for (i, q) in qs.iter().enumerate() {
                 let top = q.top();
-                for (ind, freq) in q.top_three_with_indices() {
+                for (ind, freq) in q.top_n_with_indices(PEAKS_PER_WINDOW) {
                     let time = (top - CAPACITY + ind + 1) / BAND_SIZE;
                     let bin = (i*BAND_SIZE) + (ind % BAND_SIZE);
                     ret.push(SpectrogramPoint { freq_bin: bin, magnitude: freq, time_idx: time });
