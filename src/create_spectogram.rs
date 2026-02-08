@@ -1,7 +1,7 @@
 use rustfft::{FftPlanner, num_complex::Complex};
 
-const WINDOW_SIZE: usize = 4096; // 4096 samples per chunk
-const OVERLAP: usize = 2048;     // 50% overlap
+const WINDOW_SIZE: usize = 2048; // 4096 samples per chunk
+const OVERLAP: usize = WINDOW_SIZE/2;     // 50% overlap
 
 
 pub fn create_spectrogram(samples: &[f32]) -> Vec<Vec<f32>> {
@@ -16,7 +16,7 @@ pub fn create_spectrogram(samples: &[f32]) -> Vec<Vec<f32>> {
     let mut spectrogram = Vec::new();
 
     // Sliding window
-    for (time_idx, chunk) in samples.windows(WINDOW_SIZE).step_by(WINDOW_SIZE - OVERLAP).enumerate() {
+    for chunk in samples.windows(WINDOW_SIZE).step_by(WINDOW_SIZE - OVERLAP) {
         let mut buffer: Vec<Complex<f32>> = chunk.iter()
             .zip(&window)
             .map(|(&s, &w)| Complex::new(s * w, 0.0))
@@ -26,7 +26,7 @@ pub fn create_spectrogram(samples: &[f32]) -> Vec<Vec<f32>> {
 
         // Calculate magnitude for the first half (Nyquist limit)
         let magnitudes: Vec<f32> = buffer.iter()
-            .take(WINDOW_SIZE / 2)
+            .take(OVERLAP)
             .map(|c| c.norm())
             .collect();
 

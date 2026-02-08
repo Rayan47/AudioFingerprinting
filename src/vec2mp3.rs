@@ -1,4 +1,4 @@
-use mp3lame_encoder::{Builder, FlushNoGap, MonoPcm, Quality};
+use mp3lame_encoder::{Builder, FlushNoGap, MonoPcm};
 use std::fs::File;
 use std::io::Write;
 

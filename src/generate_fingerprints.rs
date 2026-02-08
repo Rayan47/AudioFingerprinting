@@ -37,3 +37,10 @@ fn generate_fingerprints(peaks: &[SpectrogramPoint]) -> Vec<Fingerprint> {
     }
     fingerprints
 }
+
+fn hash_gen(peaks: &[SpectrogramPoint]) {
+    for chunk in peaks.chunks(10){
+
+    }
+
+}

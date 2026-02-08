@@ -4,14 +4,12 @@ use std::cmp::Ordering;
 use std::collections::VecDeque;
 
 
-const BAND_SIZE: usize = 16;
 const TIME_STEP: usize = 16;
 
-const CAPACITY: usize = BAND_SIZE * TIME_STEP;
-const Q_SIZE: usize = 2048 / BAND_SIZE;
 const STRIDE:usize = 4;
 const PEAKS_PER_WINDOW:usize = 1;
 
+const CHUNKS: [usize; 10]  = [8, 8, 16, 32, 64, 128, 128, 128, 256, 256];
 struct FixedLengthQueue {
     queue: VecDeque<f32>,
     capacity: usize,
@@ -19,10 +17,10 @@ struct FixedLengthQueue {
 }
 
 impl FixedLengthQueue {
-    fn new() -> Self {
+    fn new(capacity: usize) -> Self {
         Self {
-            queue: VecDeque::with_capacity(CAPACITY), // Pre-allocate memory
-            capacity: CAPACITY,
+            queue: VecDeque::with_capacity(capacity), // Pre-allocate memory
+            capacity,
             top: 0,
         }
     }
@@ -74,24 +72,25 @@ pub fn save_spectrogram_peaks(
     spectrogram: &[Vec<f32>]
 ) -> Vec<SpectrogramPoint> {
     let mut ret: Vec<SpectrogramPoint> = Vec::new();
-    let mut qs: [FixedLengthQueue; Q_SIZE] = std::array::from_fn(|_| {
-        let deque = FixedLengthQueue::new();
-        deque
-    });
+    let mut qs = CHUNKS.map(|t| {FixedLengthQueue::new(t*TIME_STEP)});
     for (x, column) in spectrogram.iter().enumerate() {
-        let mut i = 0;
-        for slice in column.chunks(BAND_SIZE) {
-            for &y in slice {
-                qs[i].push(y);
+        //Might be able to optimize if vector pop is used instead of n
+        let mut n = 0;
+        let chunks = CHUNKS;
+        for (i, index) in chunks.iter().enumerate() {
+            for _ in 0..*index{
+                qs[i].push(column[n]);
+                n += 1;
             }
-            i += 1;
+
         }
-        if (x >= BAND_SIZE-1) && ((x+ 1 -BAND_SIZE)%STRIDE == 0){
+        if (x >= TIME_STEP-1) && ((x+ 1 -TIME_STEP)%STRIDE == 0){
             for (i, q) in qs.iter().enumerate() {
                 let top = q.top();
                 for (ind, freq) in q.top_n_with_indices(PEAKS_PER_WINDOW) {
-                    let time = (top - CAPACITY + ind + 1) / BAND_SIZE;
-                    let bin = (i*BAND_SIZE) + (ind % BAND_SIZE);
+                    let band_size = q.capacity/TIME_STEP;
+                    let time = (top - q.capacity + ind + 1) / band_size;
+                    let bin = (i*band_size) + (ind % band_size);
                     ret.push(SpectrogramPoint { freq_bin: bin, magnitude: freq, time_idx: time });
                 }
             }
