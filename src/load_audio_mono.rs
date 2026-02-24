@@ -9,7 +9,14 @@ use std::path::Path;
 
 pub fn load_audio_mono(path: &str) -> (Vec<f32>, u32) {
     let src = File::open(Path::new(path)).expect("failed to open media");
-    let mss = MediaSourceStream::new(Box::new(src), Default::default());
+    extract_audio(src)
+}
+pub fn load_audio_from_path(path: &Path) -> (Vec<f32>, u32){
+    let src = File::open(path).expect("failed to open media");
+    extract_audio(src)
+}
+pub fn extract_audio(file: File) -> (Vec<f32>, u32) {
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
 
     let probed = symphonia::default::get_probe()
         .format(&Hint::new(), mss, &FormatOptions::default(), &MetadataOptions::default())
@@ -26,7 +33,7 @@ pub fn load_audio_mono(path: &str) -> (Vec<f32>, u32) {
     let mut sample_rate = 0u32;
     while let Ok(packet) = format.next_packet() {
         if packet.track_id() != track_id { continue; }
-        
+
         match decoder.decode(&packet) {
             Ok(decoded) => {
                 let spec = *decoded.spec();
@@ -45,9 +52,9 @@ pub fn load_audio_mono(path: &str) -> (Vec<f32>, u32) {
             Err(Error::DecodeError(_)) => (),
             Err(_) => break,
         }
-        
+
     }
     (samples, sample_rate)
-    
+
 }
 

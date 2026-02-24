@@ -4,9 +4,9 @@ use std::cmp::Ordering;
 use std::collections::VecDeque;
 
 
-const TIME_STEP: usize = 16;
+const TIME_STEP: usize = 1;
 
-const STRIDE:usize = 4;
+const STRIDE:usize = 1;
 const BUFFER_SIZE:usize = 60;
 
 const CHUNKS: [(usize, usize); 6]  = [(0, 10), (10, 20), (20, 40), (40, 80), (80, 160), (160, 512)];
@@ -131,14 +131,15 @@ impl RollingStats {
 
         variance.max(0.0).sqrt()
     }
-    pub fn get_threshold(&self) -> f32{
-        self.mean() + 0.5*self.std_dev()
+    pub fn get_threshold(&self, modifier: f32) -> f32{
+        self.mean() + modifier*self.std_dev()
     }
 }
 
 
 pub fn save_spectrogram_peaks(
-    spectrogram: &[Vec<f32>]
+    spectrogram: &[Vec<f32>],
+    modifier : f32
 ) -> Vec<SpectrogramPoint> {
     let mut ret: Vec<SpectrogramPoint> = Vec::new();
     let mut qs = CHUNKS.map(|(start, end)| {FixedLengthQueue::new((end-start)*TIME_STEP, start)});
@@ -150,7 +151,6 @@ pub fn save_spectrogram_peaks(
         }
         if (x >= TIME_STEP-1) && ((x+ 1 -TIME_STEP)%STRIDE == 0){
             let mut inter: Vec<SpectrogramPoint> = Vec::new();
-            let mut sum = 0.0f32;
             for i in 0..qs.len() {
                 let q = &mut qs[i];
                 let top = q.top();
@@ -164,7 +164,7 @@ pub fn save_spectrogram_peaks(
 
             }
             for pt in inter {
-                if pt.magnitude > track.get_threshold() {
+                if pt.magnitude > track.get_threshold(modifier) {
                     ret.push(pt);
                 }
             }
