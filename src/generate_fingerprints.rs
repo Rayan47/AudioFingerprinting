@@ -1,25 +1,34 @@
 
-use crate::types::types::Fingerprint;
+use crate::types::types::{Constellation, Fingerprint};
 use crate::types::types::SpectrogramPoint;
 
-fn generate_fingerprints(peaks: &[SpectrogramPoint]) -> Vec<Fingerprint> {
+impl Constellation {
+    fn new() -> Self {
+        Self{
+            arr: [(0, 0); 5],
+            top: 0
+        }
+    }
+    fn push(&mut self, freq:usize, delta:usize) {
+        self.arr[self.top] = (freq, delta);
+        self.top += 1;
+    }
+    
+    
+}
+
+pub fn generate_fingerprints(peaks: &[SpectrogramPoint]) -> Vec<Fingerprint> {
     let mut fingerprints = Vec::new();
 
     // Config for the target zone
     let target_zone_size = 5; // Look 5 time steps ahead
-    let delay = 1;            // Start looking 1 step after anchor
+    let delay = 3;            // Start looking 1 step after anchor
 
     for (i, anchor) in peaks.iter().enumerate() {
-        for target in peaks.iter().skip(i + 1) {
-
-            // Check if target is within the time zone
-            if target.time_idx - anchor.time_idx > target_zone_size + delay {
-                break; // Target is too far in future, stop checking this anchor
-            }
-            if target.time_idx - anchor.time_idx < delay {
-                continue; // Target is too close
-            }
-
+        if i+delay+target_zone_size >= peaks.len() {
+            break;
+        }
+        for target in peaks[(i+delay)..(i+delay+target_zone_size)].iter() {
             // Create a Hash: [Anchor Freq | Target Freq | Delta Time]
             // We use simple bit-shifting for this example, but you can use a real hasher.
             let f1 = anchor.freq_bin as u64;
