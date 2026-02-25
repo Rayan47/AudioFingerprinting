@@ -18,9 +18,8 @@ pub fn extract_peaks(song: &Path, modifier: f32) -> Vec<SpectrogramPoint> {
     let dsample = downsample(&samples, sample_rate, target_rate);
 
     let spectrum = create_spectrogram(&dsample);
-    let mut peaks = save_spectrogram_peaks(&spectrum, modifier);
-    peaks.sort_by(|a, b| a.time_idx.cmp(&b.time_idx));
-    peaks
+    save_spectrogram_peaks(&spectrum, modifier)
+    
 }
 pub fn extract_features(song: &Path, modifier: f32) -> Vec<Fingerprint>{
     generate_fingerprints(extract_peaks(song, modifier).as_slice())

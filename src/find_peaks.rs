@@ -1,69 +1,11 @@
 use crate::types::types::SpectrogramPoint;
 
-use std::cmp::Ordering;
-use std::collections::VecDeque;
 
 
-const TIME_STEP: usize = 1;
-
-const STRIDE:usize = 1;
 const BUFFER_SIZE:usize = 60;
 
 const CHUNKS: [(usize, usize); 6]  = [(0, 10), (10, 20), (20, 40), (40, 80), (80, 160), (160, 512)];
-struct FixedLengthQueue {
-    queue: VecDeque<f32>,
-    capacity: usize,
-    top: usize,
-    offset: usize,
-}
 
-impl FixedLengthQueue {
-    fn new(capacity: usize, offset: usize) -> Self {
-        Self {
-            queue: VecDeque::with_capacity(capacity), // Pre-allocate memory
-            capacity,
-            top: 0,
-            offset,
-
-        }
-    }
-
-    fn push(&mut self, item: f32) {
-        if self.queue.len() == self.capacity {
-            // If full, remove the oldest element (from the front)
-            self.queue.pop_front();
-        }
-        self.queue.push_back(item);
-        self.top += 1;
-    }
-    fn push_slice(&mut self, items: &[f32]) {
-        self.queue.extend(items.iter().cloned());
-        self.top += items.len();
-        if self.len() > self.capacity {
-            self.queue.drain(0..items.len());
-        }
-    }
-    fn top(&self) -> usize {
-        self.top
-    }
-    fn max_with_index(&self) -> Option<(usize, f32)> {
-        self.queue
-            .iter()
-            .enumerate()
-            .map(|(i, &val)| (i, val))
-            // partial_cmp handles the fact that f32 isn't fully "Ord"
-            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-    }
-
-    fn len(&self) -> usize{
-        self.queue.len()
-    }
-
-
-
-    
-
-}
 pub struct RollingStats {
     buffer: [f32; BUFFER_SIZE],
     cursor: usize,
@@ -142,35 +84,30 @@ pub fn save_spectrogram_peaks(
     modifier : f32
 ) -> Vec<SpectrogramPoint> {
     let mut ret: Vec<SpectrogramPoint> = Vec::new();
-    let mut qs = CHUNKS.map(|(start, end)| {FixedLengthQueue::new((end-start)*TIME_STEP, start)});
     let mut track = RollingStats::new();
+
     for (x, column) in spectrogram.iter().enumerate() {
-        for (i, (start, end)) in CHUNKS.iter().enumerate() {
-            qs[i].push_slice(&column[*start..*end]);
+        let mut inter: Vec<SpectrogramPoint> = Vec::new();
 
-        }
-        if (x >= TIME_STEP-1) && ((x+ 1 -TIME_STEP)%STRIDE == 0){
-            let mut inter: Vec<SpectrogramPoint> = Vec::new();
-            for i in 0..qs.len() {
-                let q = &mut qs[i];
-                let top = q.top();
-                let (ind, freq) = q.max_with_index().unwrap();
-                let band_size = q.capacity/TIME_STEP;
-                let time = (top - q.capacity + ind) / band_size;
-                let bin = q.offset + (ind % band_size);
-                track.push(freq);
-                inter.push(SpectrogramPoint { freq_bin: bin, magnitude: freq, time_idx: time });
-
-
-            }
-            for pt in inter {
-                if pt.magnitude > track.get_threshold(modifier) {
-                    ret.push(pt);
+        for (start, end) in CHUNKS.iter() {
+            let mut max_j = 0;
+            let mut max_mag = f32::MIN;
+            for j in *start..*end {
+                if max_mag < column[j] {
+                    max_mag = column[j];
+                    max_j = j;
                 }
             }
+            inter.push(SpectrogramPoint { freq_bin: max_j, magnitude: max_mag, time_idx: x });
+            track.push(max_mag);
+        }
+        for pt in inter {
+            if pt.magnitude > track.get_threshold(modifier) {
+                ret.push(pt);
             }
         }
-    ret
     }
+    ret
+}
 
 

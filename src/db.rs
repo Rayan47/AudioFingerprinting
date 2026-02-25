@@ -1,12 +1,16 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::pipeline::extract_features;
 use crate::types::types::Fingerprint;
 
 
-
+use serde::{Serialize, Deserialize};
+use std::io::{BufReader, BufWriter};
+use std::sync::mpsc;
+use rayon::prelude::*;
+#[derive(Serialize, Deserialize)]
 pub struct AudioDatabase {
     pub songs: HashMap<u32, String>,
     pub hashes: HashMap<u64, Vec<(u32, usize)>>,
@@ -23,74 +27,100 @@ impl AudioDatabase {
     }
 
     /// Recursively traverses a directory and indexes all audio files
-    pub fn index_directory(&mut self, directory: &str) -> &mut Self {
+    pub fn index_directory(&mut self, directory: &str) {
         let path = Path::new(directory);
         if !path.is_dir() {
             eprintln!("Error: {} is not a directory", directory);
-            return self;
+            return;
         }
 
-        self.visit_dirs(path);
-        self
+        // 1. Gather all file paths sequentially first
+        let mut audio_files = Vec::new();
+        self.collect_files(path, &mut audio_files);
+
+        let total_files = audio_files.len();
+        println!("Found {} audio files. Processing in parallel...", total_files);
+
+        // 2. Set up a message channel
+        // tx (Transmitter) can be cloned and given to many threads.
+        // rx (Receiver) stays on the main thread.
+        let (tx, rx) = mpsc::channel();
+
+        // 3. Process files in the background using Rayon's thread pool
+        // We use thread::spawn so the main thread isn't blocked and can start
+        // receiving data immediately.
+        std::thread::spawn(move || {
+            // into_par_iter() automatically distributes the workload across all CPU cores
+            audio_files.into_par_iter().for_each(|file_path| {
+
+                let filename = file_path.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+
+                println!("Thread {:?} started processing: {}", std::thread::current().id(), filename);
+
+                // Run the heavy audio pipeline (Decoding -> FFT -> Hashing)
+                let fingerprints = extract_features(&file_path, 1.0f32);
+
+                // Send the result back to the main thread
+                // If the receiver is dropped, send() fails, so we just ignore errors here
+                let _ = tx.send((filename, fingerprints));
+            });
+            // The `tx` is dropped here when the parallel iterator finishes.
+            // This signals the `rx` channel to close.
+        });
+
+        // 4. Listen on the main thread and insert into the database sequentially
+        let mut processed_count = 0;
+
+        // This loop will block and wait for messages. It automatically exits
+        // when all transmitters (`tx`) are dropped (i.e., when all files are done).
+        for (filename, fingerprints) in rx {
+            processed_count += 1;
+
+            let song_id = self.next_song_id;
+            self.songs.insert(song_id, filename.clone());
+            self.next_song_id += 1;
+
+            for fp in fingerprints {
+                self.hashes
+                    .entry(fp.hash)
+                    .or_insert_with(Vec::new)
+                    .push((song_id, fp.time_offset));
+            }
+
+            println!("Merged {}/{} into DB: {}", processed_count, total_files, filename);
+        }
+
+        println!("Indexing complete! Database contains {} songs.", self.songs.len());
+    }
+    pub fn update_db(&mut self, path_to_song: &str){
+
     }
 
-    // Helper to walk directories recursively
-    fn visit_dirs(&mut self, dir: &Path) {
+    /// Helper to recursively gather file paths (Runs quickly on the main thread)
+    fn collect_files(&self, dir: &Path, files: &mut Vec<PathBuf>) {
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
 
                 if path.is_dir() {
-                    self.visit_dirs(&path);
+                    self.collect_files(&path, files);
                 } else {
-                    self.process_file(&path);
+                    let is_audio = path.extension()
+                        .and_then(|ext| ext.to_str())
+                        .map(|ext| ext == "mp3" || ext == "wav")
+                        .unwrap_or(false);
+
+                    if is_audio {
+                        files.push(path);
+                    }
                 }
             }
         }
     }
 
-    fn process_file(&mut self, path: &Path) {
-        // Only process specific audio extensions
-        let is_audio = path.extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| ext == "mp3" || ext == "wav")
-            .unwrap_or(false);
-
-        if !is_audio {
-            return;
-        }
-
-        let filename = path.file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned();
-
-        println!("Indexing: {}", filename);
-
-        // 1. Assign an ID and store the song name
-        let song_id = self.next_song_id;
-        self.songs.insert(song_id, filename);
-        self.next_song_id += 1;
-
-        // 2. Run your audio pipeline to get fingerprints
-        // (You will need to wrap your load -> downsample -> FFT -> peak pipeline here)
-        let fingerprints = extract_features(path, 1f32);
-
-        // 3. Insert all fingerprints into the hash database
-        for fp in fingerprints {
-            // .entry() allows us to get the existing Vec or insert a new one in O(1) time
-            self.hashes
-                .entry(fp.hash)
-                .or_insert_with(Vec::new)
-                .push((song_id, fp.time_offset));
-        }
-    }
-    pub fn lookup_hash(&self, hash: u64) -> Option<Vec<(u32,usize)>> {
-        self.hashes.get(&hash).cloned()
-    }
-    pub fn lookup_song(&self, song_id: u32) -> Option<String> {
-        self.songs.get(&song_id).cloned()
-    }
     pub fn find_best_match(&self, query_fingerprints: &[Fingerprint]) -> Option<String> {
         // We need to map: SongID -> (TimeDelta -> MatchCount)
         // We use i64 for the delta because the query could technically 
@@ -152,5 +182,31 @@ impl AudioDatabase {
         println!("No match found. (Highest coherence was {} hashes)", max_aligned_matches);
         None
     }
+    pub fn save_to_file(&self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let file = fs::File::create(path)?;
+        // Wrap the file in a BufWriter for performance
+        let mut writer = BufWriter::new(file);
 
+        // Serialize the database directly into the file stream
+        rmp_serde::encode::write(&mut writer, &self)?;
+
+        println!("Successfully saved database to {}", path);
+        Ok(())
+    }
+
+    /// Loads the database from a binary file on disk.
+    pub fn load_from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let file = fs::File::open(path)?;
+        // Wrap the file in a BufReader for performance
+        let reader = BufReader::new(file);
+
+        // Deserialize the bytes back into our AudioDatabase struct
+        let db: AudioDatabase = rmp_serde::decode::from_read(reader)?;
+
+        println!(
+            "Successfully loaded database from {}. ({} songs, {} unique hashes)",
+            path, db.songs.len(), db.hashes.len()
+        );
+        Ok(db)
+    }
 }
